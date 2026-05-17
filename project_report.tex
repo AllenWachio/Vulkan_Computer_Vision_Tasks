@@ -1,0 +1,73 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{titlesec}
+\usepackage{setspace}
+
+\title{\textbf{Autonomous Balloon-Seeking Rover: \\ Vision-Based Navigation and State Management}}
+\author{Autonomous Robotics Division}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This report outlines the development of an autonomous rover software stack designed to detect, track, and approach a specific sequence of colored balloons in an obstacle-free environment. The system utilizes computer vision techniques via OpenCV, specifically leveraging the HSV color space for robust color detection. The core navigation logic relies on a finite state machine that sequences target colors, utilizes a pinhole camera model for distance estimation, and implements a holding mechanism upon target acquisition. The modular software design supports both development on local machinery and deployment on embedded hardware interfaces.
+\end{abstract}
+
+\section{Introduction}
+Autonomous navigation using visual data remains a cornerstone of modern robotics. The project detailed herein involves the implementation of a vision-based control system for a rover navigating flat terrain. The primary objective of the rover is to sequential approach a series of balloons defined by a strict color sequence: BLACK $\rightarrow$ WHITE $\rightarrow$ PINK $\rightarrow$ YELLOW $\rightarrow$ BLUE. 
+
+For each target balloon in the sequence, the rover must reliably detect the color, maneuver toward it, stop at a predetermined distance of $1.5$ meters, and hold position for 5 seconds before transitioning to the next target. The environment is devoid of obstacles, simplifying the navigation requirements to direct tracking and alignment, thereby permitting a focal shift toward robust detection and state processing.
+
+\section{System Architecture}
+
+The software stack is highly modularized, emphasizing clear separation of concerns between configuration, computer vision processing, robotic control APIs, and sequence management. 
+
+\subsection{Vision System and Color Detection}
+The \texttt{VisionSystem} acts as the primary sensory input pipeline for the rover. Images are captured through standard RGB or BGR camera interfaces and are immediately converted to the Hue, Saturation, and Value (HSV) color space. The conversion to HSV is critical for this application; while BGR captures combined luminance and chrominance in every channel, HSV decouples color information (Hue) from lighting intensity (Value). This makes thresholding dramatically more robust against varying lighting conditions, shadows, and glares often found in real-world deployments.
+
+Once in the HSV format, a binary mask is generated using pre-calibrated lower and upper parameter boundaries specific to the targeted balloon color. 
+
+To mitigate the effects of image noise—which usually manifests as errant bright pixels in the binary mask—morphological operations are applied:
+\begin{itemize}
+    \item \textbf{Erosion:} Strips away isolated pixels, effectively removing background static.
+    \item \textbf{Dilation:} Restores the structural volume of the true target area that may have been slightly reduced during the erosion pass.
+\end{itemize}
+
+Following noise reduction, \texttt{cv2.findContours()} extracts the active blob regions. The algorithm identifies the largest contour by pixel area, bounding it with a rectangle to define the target's visual footprint.
+
+\subsection{Distance Estimation}
+Without the use of active depth sensors (such as LiDAR or ultrasonic modules), distance is estimated monocularly using a pinhole camera approximation. By knowing the standard real-world diameter of a party balloon ($\sim 30$ cm) and the camera's focal length, the distance $D$ (in cm) is computed based on the apparent width of the balloon in pixels $P$:
+
+\begin{equation}
+    D = \frac{W_{real} \times F}{P}
+\end{equation}
+
+Where $W_{real} = 30.0$ cm and $F$ is a pre-calibrated focal length in pixels. This allows the system to consistently halt the rover when $D \leq 150.0$ cm ($1.5$ meters).
+
+\section{Finite State Machine and Navigation}
+
+The behavioral logic is overseen by a \texttt{StateMachine} class that strictly monitors target progression. 
+The system operates within the following conceptual states:
+\begin{enumerate}
+    \item \textbf{Searching:} If no target matching the current required color is found, the rover executes a rotational search pattern (\texttt{spin\_left}).
+    \item \textbf{Aligning and Approaching:} When the contour is identified, the rover calculates the center disparity. If the balloon lies significantly off the camera's center axis, the rover executes rotational corrections (\texttt{spin\_left} or \texttt{spin\_right}) until within tolerance, then commands forward drive.
+    \item \textbf{Holding:} Upon measuring the distance at $\leq 150$ cm, all motors are stopped, and a timestamp is recorded. The system remains in this state for $5.0$ seconds.
+    \item \textbf{Advancing:} After the 5-second hold, the state machine increments the target index, loading the next color's HSV bounds, and the cycle repeats.
+\end{enumerate}
+
+\section{Hardware Abstraction}
+
+To ensure the code remains portable, hardware interactions are encapsulated within a \texttt{RoverMockAPI}. Function calls such as \texttt{drive\_forward()} and \texttt{stop()} are abstracted. In a production environment, these stub functions will be populated with interface-specific commands, such as PySerial bitstreams directed to an Arduino motor controller, or Twist messages published to a Robot Operating System (ROS) node.
+
+\section{Conclusion}
+The software stack developed establishes an effective, robust foundation for autonomous sequence tracking. By utilizing OpenCV's HSV masking tied to a simple computational distance model and a rigid state machine, the rover achieves its directive without requiring complex neural networks or expensive LiDAR systems. The framework has been structured flexibly, allowing instantaneous transitions between local development simulations and live physical deployment.
+
+\end{document}
