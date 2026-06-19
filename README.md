@@ -23,7 +23,7 @@ pip install -r requirements.txt
 Every lighting environment is different. To find the exact HSV bounds for your balloons:
 
 ```bash
-python -m src.calibrate
+python -m tools.calibrate
 ```
 
 Adjust the sliders until the balloon is bright white on the mask and everything else is black. Press `q` to quit and print the values. Update `src/config.py` with these printed thresholds.
@@ -41,9 +41,32 @@ Connect the USB camera. Often, external USB cameras mount at index 1 or 2.
 CAMERA_INDEX=1 python -m src.main
 ```
 
-## Hardware Integration Notes
+## System Integration (Pure CV Node)
 
-Open `src/rover.py`. The `RoverMockAPI` class contains stub methods (`drive_forward`, `spin_left`, `spin_right`, `stop`). Replace the logging statements in these methods with your actual hardware SDK or ROS Twist publisher logic to make the physical chassis response to the CV outputs.
+This module acts as a "Perception Node". The motion integration logic has been fully decoupled for another software team to implement. When running `src/main.py`, the system continually prints standardized JSON outputs containing the calculated action.
+
+Example outputs:
+
+```json
+OUTPUT: {"action": "SPIN_RIGHT", "error_px": 125}
+OUTPUT: {"action": "DRIVE_FORWARD", "distance_cm": 240.2}
+OUTPUT: {"action": "STOP", "reason": "target_reached", "distance_cm": 149.0}
+```
+
+Another script (e.g., a ROS node or a Python serial manager) can capture standard output (`stdout`) from this script and translate `DRIVE_FORWARD` or `SPIN_LEFT` into motor PWM signals.
+
+## Focal Length Calibration
+
+To ensure the 1.5-meter stopping distance is highly accurate, you must calibrate the exact focal length `FOCAL_LENGTH_PX` of your camera lens.
+
+1. Place a fully inflated competition balloon exactly **100cm (1.0 meter)** away from your lens.
+2. Run the focal length calibration script:
+   ```bash
+   python -m tools.calibrate_focal
+   ```
+3. A picture window will appear. Click and drag a tight box around the exact width of the balloon.
+4. Press `SPACE` or `ENTER`.
+5. The terminal will print out your exact `FOCAL_LENGTH_PX`. Update this value inside `src/config.py`.
 
 ## How Color Detection Works
 

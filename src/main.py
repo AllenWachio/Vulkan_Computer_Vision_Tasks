@@ -1,12 +1,13 @@
 import cv2
 import time
 import logging
+import json
 from src.config import TARGET_SEQUENCE, TARGET_DISTANCE_CM, HOLD_TIME_SEC, CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT, CENTER_TOLERANCE_PX
-from src.rover import RoverMockAPI
 from src.vision import VisionSystem
+from src.utils.telemetry import TelemetryLogger
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+logger = logging.getLogger("CV_NODE")
 
 class StateMachine:
     def __init__(self):
@@ -24,95 +25,115 @@ class StateMachine:
         self.current_idx += 1
         self.holding = False
         if self.current_target():
-            logger.info(f"Advancing state. New target: {self.current_target()}")
+            logger.info(f"SEQUENCE_ADVANCE: Next Target -> {self.current_target()}")
         else:
-            logger.info("All targets reached! Sequence complete.")
+            logger.info("SEQUENCE_COMPLETE: All targets reached!")
+
+def emit_command(action, details=None):
+    """
+    Decoupled output payload. Another team's script can read this standard output 
+    to drive the hardware chassis. Returns the action string for telemetry logging.
+    """
+    payload = {"action": action}
+    if details:
+        payload.update(details)
+    logger.info(f"OUTPUT: {json.dumps(payload)}")
+    return action
 
 def main():
-    rover = RoverMockAPI()
     vision = VisionSystem(camera_index=CAMERA_INDEX, width=CAMERA_WIDTH, height=CAMERA_HEIGHT)
     state = StateMachine()
+    telemetry = TelemetryLogger()
 
     if not vision.initialize():
-        logger.error("Exiting due to camera failure.")
+        logger.error("SYSTEM_FAILURE: Could not start camera.")
         return
 
-    logger.info(f"Starting mission. First target: {state.current_target()}")
+    logger.info(f"SYSTEM_START: First target -> {state.current_target()}")
+    logger.info(f"TELEMETRY: Logging session data to {telemetry.filename}")
 
     try:
         while True:
             target_color = state.current_target()
             if not target_color:
-                rover.stop()
-                break # Mission complete
+                emit_command("STOP", {"reason": "mission_complete"})
+                break 
 
             ret, frame = vision.read_frame()
             if not ret:
-                logger.warning("Frame read failed.")
+                logger.warning("WARN: Frame read failed")
                 time.sleep(0.1)
                 continue
 
             frame_center_x = CAMERA_WIDTH // 2
-            
-            # Process vision
             mask, target_info = vision.process_frame(frame, target_color)
 
-            # Draw UI on debug frame
+            # Variables strictly for telemetry recording
+            dist_val = None
+            err_val = None
+            action_taken = "NONE"
+            fsm_state = "HOLDING" if state.holding else "SEARCH/APPROACH"
+            is_detected = bool(target_info)
+
+            # --- UI Display logic ---
             debug_frame = frame.copy()
             cv2.putText(debug_frame, f"Target: {target_color}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
             if target_info:
-                distance = target_info['distance_cm']
+                dist_val = target_info['distance_cm']
                 cx = target_info['x']
+                err_val = cx - frame_center_x
                 
                 # Draw bounding box
                 x, y = cx - target_info['w']//2, target_info['y'] - target_info['h']//2
                 cv2.rectangle(debug_frame, (x, y), (x + target_info['w'], y + target_info['h']), (255, 0, 0), 2)
-                cv2.putText(debug_frame, f"Dist: {int(distance)}cm", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                cv2.putText(debug_frame, f"Dist: {int(dist_val)}cm", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
                 if state.holding:
                     elapsed = time.time() - state.hold_start_time
                     cv2.putText(debug_frame, f"HOLDING: {elapsed:.1f}s", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                    
                     if elapsed >= HOLD_TIME_SEC:
                         state.advance()
+                        action_taken = "ADVANCE_SEQUENCE"
+                    else:
+                        action_taken = emit_command("STOP", {"reason": "holding", "time_left": round(HOLD_TIME_SEC - elapsed, 1)})
                 else:
-                    # Navigation Logic
-                    if distance <= TARGET_DISTANCE_CM:
-                        rover.stop()
-                        logger.info(f"Target {target_color} reached at {distance:.1f} cm. Stopping for {HOLD_TIME_SEC} seconds.")
+                    # Pure Vision Logic / Decision Making
+                    if dist_val <= TARGET_DISTANCE_CM:
+                        action_taken = emit_command("STOP", {"reason": "target_reached", "distance_cm": round(dist_val, 1)})
                         state.holding = True
                         state.hold_start_time = time.time()
                     else:
-                        # Simple alignment (proportional control mock)
-                        error_x = cx - frame_center_x
-                        if abs(error_x) > CENTER_TOLERANCE_PX:
-                            if error_x > 0:
-                                rover.spin_right()
+                        if abs(err_val) > CENTER_TOLERANCE_PX:
+                            if err_val > 0:
+                                action_taken = emit_command("SPIN_RIGHT", {"error_px": err_val})
                             else:
-                                rover.spin_left()
+                                action_taken = emit_command("SPIN_LEFT", {"error_px": err_val})
                         else:
-                            rover.drive_forward()
+                            action_taken = emit_command("DRIVE_FORWARD", {"distance_cm": round(dist_val, 1)})
             else:
-                # No target found
                 if not state.holding:
-                    rover.spin_left() # Search behavior
+                    action_taken = emit_command("SEARCH", {"action": "spin_left"})
                     cv2.putText(debug_frame, "SEARCHING...", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 165, 255), 2)
 
-            # Show windows
-            cv2.imshow("Rover View", debug_frame)
-            cv2.imshow("Mask View", mask)
+            # Record exactly what happened on this frame to the CSV
+            telemetry.log_step(target_color, is_detected, dist_val, err_val, fsm_state, action_taken)
+
+            cv2.imshow("CV Perception Node", debug_frame)
+            cv2.imshow("CV Mask", mask)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
-                logger.info("Manual shutdown triggered.")
+                logger.info("SYSTEM_SHUTDOWN: Manual quit")
                 break
 
     except KeyboardInterrupt:
-        logger.info("Keyboard interrupt.")
+        logger.info("SYSTEM_SHUTDOWN: Keyboard interrupt")
     finally:
-        rover.stop()
+        emit_command("STOP", {"reason": "shutdown"})
         vision.cleanup()
+        telemetry.cleanup()
         cv2.destroyAllWindows()
-        logger.info("Shutdown complete.")
 
 if __name__ == '__main__':
     main()
