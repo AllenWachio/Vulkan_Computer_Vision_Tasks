@@ -1,27 +1,40 @@
-# Autonomous Balloon Rover
+# Vulkan Computer Vision
 
-This project is a vision pipeline for an autonomous rover that detects balloons in the sequence BLACK → WHITE → PINK → YELLOW → BLUE, verifies the color with HSV, estimates distance, and emits clean action messages for a separate motion controller.
+This repository contains two standalone computer-vision tasks that share the same camera layer but stay separate in code, configuration, and runtime entry points:
 
-For the second standalone computer vision task that detects hammer, traffic cone, and tennis ball objects, see [README_OBJECT_DETECTION.md](README_OBJECT_DETECTION.md).
+1. A balloon rover pipeline that detects balloons in the sequence BLACK → WHITE → PINK → YELLOW → BLUE, verifies color with HSV, estimates distance, and emits action messages.
+2. An object-detection pipeline that recognizes hammer, traffic cone, and tennis ball targets.
 
-## What the system does
+The balloon task remains the original autonomous competition flow. The object task is a simpler detector that focuses on object presence and class recognition.
 
-The current runtime is a two-stage detector:
+## Project Overview
 
-1. **YOLO11 / ONNX** finds candidate balloon regions in the frame.
-2. **OpenCV HSV + contour checks** verifies the target color only inside each YOLO ROI.
+The balloon runtime is a two-stage detector:
 
-That means the system does **not** scan the entire frame with HSV alone during autonomous mode. If the model does not propose a balloon region, the frame is treated as having no valid target.
+1. YOLO11 / ONNX finds candidate balloon regions in the frame.
+2. OpenCV HSV plus contour checks verifies the target color only inside each YOLO ROI.
 
-## Repository layout
+That means the balloon pipeline does not scan the full frame with HSV alone. If the model does not propose a balloon region, the frame is treated as having no valid target.
+
+The object-detection runtime is simpler:
+
+1. Capture a frame from the webcam.
+2. Run the object detector model.
+3. Parse detections above threshold.
+4. Draw boxes and labels on the frame.
+5. Log the detections for debugging.
+
+## Repository Layout
 
 - `src/balloon_task/main.py`: balloon state machine, frame loop, hold timer, and action output
 - `src/balloon_task/vision.py`: YOLO candidate detection, ROI color verification, and distance estimation
 - `src/balloon_task/config.py`: balloon HSV bounds, camera settings, model path, and thresholds
 - `src/balloon_task/telemetry.py`: balloon-task CSV logging for debugging
 - `src/object_task/main.py`: standalone object-detection entry point
-- `src/shared/camera.py`: shared webcam helper
+- `src/object_task/vision.py`: object detector, class mapping, and frame postprocessing
+- `src/object_task/config.py`: object model path, class labels, and thresholds
 - `src/object_task/telemetry.py`: object-task logging for debugging
+- `src/shared/camera.py`: shared webcam helper used by both tasks
 - `tools/calibrate.py`: interactive HSV calibration helper
 - `tools/calibrate_focal.py`: focal length calibration helper
 
@@ -40,196 +53,180 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Put the model in the expected location
+### 3. Put the model files in the expected locations
 
-The runtime expects the ONNX export of your trained balloon detector at:
+The repository expects these ONNX exports:
 
 ```bash
 Ballon_Detection_Weights/best.onnx
+Hammer_Tennisball_Trafficcone_Weights/best.onnx
 ```
 
-If you want to use a different path, set `YOLO_MODEL_PATH` in the environment before launch.
+If you want to use different paths, set the corresponding environment variables before launch.
 
-## How to run
+## How to Run
 
-### Development mode with a laptop webcam
+### Balloon task
+
+Development mode with a laptop webcam:
 
 ```bash
 CAMERA_INDEX=0 python -m src.balloon_task.main
 ```
 
-### Deployment mode with the rover USB camera
+Deployment mode with the rover USB camera:
 
 ```bash
 CAMERA_INDEX=1 python -m src.balloon_task.main
 ```
 
-### Color calibration
+### Object-detection task
 
-Use this when tuning HSV bounds for the current lighting:
-
-```bash
-python -m tools.calibrate
-```
-
-### Focal length calibration
-
-Use this to improve the 1.5 m distance estimate:
+Run the object detector with the same camera setup:
 
 ```bash
-python -m tools.calibrate_focal
+CAMERA_INDEX=0 python -m src.object_task.main
 ```
 
-## How Calibration Works
+If needed, set `OBJECT_MODEL_PATH`, `OBJECT_CONF_THRESHOLD`, `OBJECT_IOU_THRESHOLD`, or `OBJECT_INPUT_SIZE` in the environment before launch.
 
-There are two calibration steps in this project, and both matter for reliable detection.
+## Balloon Task Details
 
-### 1. HSV color calibration
+The balloon pipeline detects target regions, verifies color, and estimates distance from the bounding-box width.
 
-This step tunes the color ranges used by the OpenCV detector.
+### Why HSV is used
 
-Run:
+HSV separates color from brightness, which makes the color check more robust under changing lighting.
 
-```bash
-python -m tools.calibrate
-```
-
-What happens during calibration:
-
-1. The camera opens a live preview.
-2. You adjust the HSV sliders until the target balloon is clearly isolated in the mask.
-3. The goal is to make the balloon appear white in the mask and the background appear black.
-4. When the mask looks correct, press `q` to print the final HSV bounds.
-5. Copy those bounds into `src/balloon_task/config.py` if you need to replace the default values.
-
-Why this matters:
-
-- lighting changes can shift the apparent color of a balloon
-- different cameras interpret color slightly differently
-- a good calibration reduces false positives and missed detections
-
-### 2. Focal length calibration
-
-This step tunes the distance estimate used by the pinhole camera model.
-
-Run:
-
-```bash
-python -m tools.calibrate_focal
-```
-
-What happens during calibration:
-
-1. Place a balloon at a known distance, usually 100 cm from the camera.
-2. Draw a box around the balloon in the preview window.
-3. The script uses the known real-world balloon width and the measured pixel width to calculate `FOCAL_LENGTH_PX`.
-4. Copy the printed focal length into `src/balloon_task/config.py`.
-
-Why this matters:
-
-- the stop distance depends on the accuracy of the focal length
-- if the focal length is wrong, the rover may stop too early or too late
-- calibrating on the actual camera improves consistency more than using a guessed value
-
-## Why HSV Is Used
-
-The project uses HSV instead of raw BGR or RGB because HSV separates color from brightness.
-
-### What HSV means
-
-- **Hue** describes the actual color, such as red, blue, or yellow
-- **Saturation** describes how strong or pure the color is
-- **Value** describes brightness
-
-### Why that helps
-
-Color detection in BGR is sensitive to lighting because all three channels mix color and brightness together. A shadow, glare, or exposure change can make the same balloon look very different in RGB/BGR space.
-
-HSV is more stable for this task because:
-
-1. the balloon color is mostly represented by Hue
-2. brightness changes mostly affect the Value channel instead of the color identity
-3. thresholds are easier to tune for specific target colors
-
-### How HSV is used in this project
+- Hue describes the actual color.
+- Saturation describes color strength.
+- Value describes brightness.
 
 After YOLO finds a candidate balloon region, the code:
 
 1. crops the region of interest
-2. converts that crop from BGR to HSV
+2. converts the crop from BGR to HSV
 3. applies the target color bounds from `src/balloon_task/config.py`
-4. creates a binary mask where matching pixels are white and everything else is black
+4. creates a binary mask
 5. cleans the mask with erosion and dilation
-6. checks the resulting contour to make sure the object is large and valid enough to be treated as a balloon
+6. checks the resulting contour to confirm a valid balloon region
 
-This gives the system a two-stage filter:
+### Calibration
 
-- YOLO decides whether the object looks like a balloon
-- HSV decides whether that balloon is the correct color
+There are two calibration steps in the balloon workflow.
 
-That combination is much more reliable than trying to use color alone.
+HSV color calibration:
 
-## Detection pipeline
-
-The core color logic in `src/balloon_task/vision.py` works like this:
-
-1. The camera frame is captured in BGR.
-2. YOLO11 proposes balloon candidate bounding boxes.
-3. The code crops each YOLO box to an ROI.
-4. The ROI is converted to HSV.
-5. The target color bounds from `src/balloon_task/config.py` are applied.
-6. Morphological operations remove noise.
-7. Contours are used to confirm a strong object region.
-8. The balloon width is used in the pinhole approximation:
-
-```text
-Distance = (Real Balloon Width × Focal Length) / Pixel Width
+```bash
+python -m tools.calibrate
 ```
 
-## Autonomous behavior
+Use this to tune the target color bounds for the current lighting and camera.
+The tool opens three windows: the live camera feed, the binary HSV mask, and the masked result. You move the HSV trackbars until the target balloon stays white in the mask while the background stays black. When it looks right, press `q` and copy the printed lower and upper HSV bounds into `src/balloon_task/config.py`.
 
-`src/balloon_task/main.py` tracks the target sequence and only advances when:
+Focal length calibration:
+
+```bash
+python -m tools.calibrate_focal
+```
+
+Use this to improve the distance estimate in the pinhole camera model. The tool asks you to place a balloon about 1 meter from the camera, then draw a box around the balloon width with the ROI selector. It uses the pinhole equation $F = (P \times D) / W$ to compute the focal length in pixels, where $P$ is the measured pixel width, $D$ is the known distance, and $W$ is the real balloon width from the config. Copy the printed value into `src/balloon_task/config.py`.
+
+In practice, this means:
+
+1. HSV calibration is for color filtering.
+2. Focal-length calibration is for distance estimation.
+3. Both should be redone if you change cameras or lighting significantly.
+
+The object-detection task does not need HSV or focal-length calibration unless you later add a similar size- or color-based filter.
+
+### Autonomous behavior
+
+`src/balloon_task/main.py` advances through the target sequence only when:
 
 - the correct balloon color is detected
 - the estimated distance is at or below 1.5 m
 - the rover holds position for 5 seconds
 
-Instead of sending motor commands directly, the script prints JSON-style action messages to stdout. This keeps the vision stack decoupled from the motor-control stack.
+Instead of sending motor commands directly, the script prints JSON-style action messages to stdout. That keeps the vision stack decoupled from the motor-control stack.
 
-Example output:
+## Object-Detection Task Details
 
-```json
-OUTPUT: {"action": "SPIN_RIGHT", "error_px": 125}
-OUTPUT: {"action": "DRIVE_FORWARD", "distance_cm": 240.2}
-OUTPUT: {"action": "STOP", "reason": "target_reached", "distance_cm": 149.0}
-```
+The object task is a separate pipeline that focuses on class recognition rather than HSV color verification.
+
+It should:
+
+1. Read frames from the shared webcam abstraction.
+2. Load the `Hammer_Tennisball_Trafficcone_Weights` model.
+3. Detect hammer, traffic cone, and tennis ball in real scenes.
+4. Draw detections and labels on the frame.
+5. Log detections and confidence scores for debugging.
+
+The class labels are defined in `src/object_task/config.py`. If object names appear swapped in the UI, the first thing to check is the label order versus the model's class index order.
 
 ## Telemetry
 
-Each run creates a new CSV file in `logs/` with timestamped frame records. The log includes:
+Each task writes its own CSV log under `logs/`.
 
-- timestamp
-- uptime
-- target color
-- detection flag
-- distance estimate
-- center error
-- FSM state
-- emitted action
+- Balloon telemetry tracks the target color, distance estimate, FSM state, and emitted action.
+- Object telemetry tracks the detected label, confidence, bounding box, and frame latency.
 
-This is useful for debugging false detections, distance tuning, and camera/model issues.
+This separation keeps the debugging output clean and lets the two tasks evolve independently.
 
-## Edge-device notes
+## Model Handling
 
-The trained model is intended for deployment as ONNX rather than running PyTorch directly at runtime. Keep the original `.pt` files for retraining only, and deploy the `.onnx` export on edge hardware.
+Both model folders should stay local and be ignored by Git.
 
-Recommended runtime behavior:
+- `Ballon_Detection_Weights/best.onnx`
+- `Hammer_Tennisball_Trafficcone_Weights/best.onnx`
 
-- use the ONNX model on the device
-- keep batch size at 1
-- keep the camera resolution modest
-- use telemetry to watch inference time and false positives
+The `.pt` files are useful for retraining, but the runtime should use the ONNX exports.
 
-## Git and model files
+## Why the Split Matters
+
+Keeping the two tasks separate makes the project easier to maintain.
+
+- clearer debugging
+- easier model switching
+- cleaner documentation
+- independent calibration paths
+- less risk of one task breaking the other
+
+## Git and Generated Files
 
 The repository ignores model artifacts and generated logs. Keep the weight files local or distribute them through a release artifact instead of committing them to Git.
+
+## Troubleshooting
+
+### Camera does not open
+
+If the preview window never appears or the script exits early, check:
+
+- that `CAMERA_INDEX` points to the correct device
+- that no other app is already using the webcam
+- that the shared camera helper can read frames on your system
+
+### Model file is missing
+
+If the detector logs that the model file was not found, verify these paths exist:
+
+- `Ballon_Detection_Weights/best.onnx`
+- `Hammer_Tennisball_Trafficcone_Weights/best.onnx`
+
+You can also point the runtime at a different file by setting the matching environment variable before launch.
+
+### Import or runtime errors
+
+If Python cannot import `cv2` or `onnxruntime`, reinstall the dependencies with:
+
+```bash
+pip install -r requirements.txt
+```
+
+### Swapped object labels
+
+If hammer and traffic cone appear swapped, the most likely cause is class-index order in the exported model versus the hardcoded labels in `src/object_task/config.py`. Check that the ONNX export uses the same class ordering as the runtime label list.
+
+### Calibration results look wrong
+
+If HSV calibration is not isolating the balloon cleanly, retune the trackbars under the current lighting and camera exposure. If distance estimates look off, rerun the focal-length calibration with the balloon measured at the correct real-world distance.
