@@ -5,7 +5,7 @@ from pathlib import Path
 
 import onnxruntime as ort
 
-from src.config import (
+from src.balloon_task.config import (
     HSV_BOUNDS,
     REAL_BALLOON_WIDTH_CM,
     FOCAL_LENGTH_PX,
@@ -17,11 +17,11 @@ from src.config import (
     COLOR_MASK_MIN_RATIO,
     COLOR_COMBINED_SCORE_THRESHOLD,
 )
+from src.shared.camera import SharedCamera
 
 logger = logging.getLogger(__name__)
 
 
-# YOLO inference wrapper used to find candidate balloon regions before color verification.
 class BalloonDetector:
     def __init__(self, model_path, conf_threshold=0.35, iou_threshold=0.45, input_size=640):
         self.model_path = model_path
@@ -51,7 +51,6 @@ class BalloonDetector:
 
     @staticmethod
     def _letterbox(image, new_size=640, color=(114, 114, 114)):
-        # Resize while preserving aspect ratio so the model sees a square input.
         original_height, original_width = image.shape[:2]
         scale = min(new_size / original_height, new_size / original_width)
         resized_width = int(round(original_width * scale))
@@ -74,7 +73,6 @@ class BalloonDetector:
         return padded, scale, pad_left, pad_top
 
     def detect(self, frame):
-        # Run YOLO inference and convert predictions back into image-space boxes.
         if not self.enabled:
             return []
 
@@ -141,6 +139,7 @@ class VisionSystem:
         self.width = width
         self.height = height
         self.cap = None
+        self.camera = SharedCamera(camera_index=camera_index, width=width, height=height)
         self.detector = BalloonDetector(
             YOLO_MODEL_PATH,
             conf_threshold=YOLO_CONF_THRESHOLD,
@@ -149,42 +148,27 @@ class VisionSystem:
         ) if YOLO_ENABLED else None
 
     def initialize(self, retries=3):
-        # Open the camera with a few retries so the system can recover from startup delays.
-        for i in range(retries):
-            logger.info(f"Attempting to initialize camera {self.camera_index} (try {i+1}/{retries})")
-            self.cap = cv2.VideoCapture(self.camera_index)
-            if self.cap.isOpened():
-                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-                logger.info("Camera initialized successfully.")
-                return True
-            import time
-            time.sleep(1)
-        
-        logger.error(f"Failed to initialize camera at index {self.camera_index}")
-        return False
+        opened = self.camera.open(retries=retries)
+        if opened:
+            self.cap = self.camera.cap
+        return opened
 
     def read_frame(self):
-        if not self.cap or not self.cap.isOpened():
-            return False, None
-        return self.cap.read()
+        return self.camera.read()
 
     @staticmethod
     def _build_mask_from_roi(frame_shape, bbox, roi_mask):
-        # Expand an ROI mask back into full-frame coordinates for display and logging.
         full_mask = np.zeros(frame_shape[:2], dtype=np.uint8)
         x1, y1, x2, y2 = bbox
         full_mask[y1:y2, x1:x2] = roi_mask
         return full_mask
 
     def _verify_color_in_roi(self, frame, bbox, target_color_name, detection_confidence):
-        # Verify the candidate balloon color only inside the YOLO box.
         x1, y1, x2, y2 = bbox
         roi = frame[y1:y2, x1:x2]
         if roi.size == 0:
             return None, None
 
-        # Convert ROI to HSV and threshold for the currently required balloon color.
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
         lower_bound, upper_bound = HSV_BOUNDS.get(target_color_name, ((0, 0, 0), (0, 0, 0)))
@@ -204,7 +188,6 @@ class VisionSystem:
         if mask_ratio < COLOR_MASK_MIN_RATIO:
             return None, None
 
-        # Use contours to reject tiny blobs and score the candidate geometry.
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             return None, None
@@ -242,51 +225,7 @@ class VisionSystem:
         full_mask = self._build_mask_from_roi(frame.shape, bbox, mask)
         return full_mask, target_info
 
-    def _process_color_only(self, frame, target_color_name):
-        # Fallback path that preserves the original full-frame HSV detector.
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-
-        lower_bound, upper_bound = HSV_BOUNDS.get(target_color_name, ((0, 0, 0), (0, 0, 0)))
-        lower_bound = np.array(lower_bound, dtype=np.uint8)
-        upper_bound = np.array(upper_bound, dtype=np.uint8)
-
-        # Create mask
-        mask = cv2.inRange(hsv, lower_bound, upper_bound)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        mask = cv2.erode(mask, kernel, iterations=2)
-        mask = cv2.dilate(mask, kernel, iterations=2)
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        target_info = None
-        if contours:
-            largest_contour = max(contours, key=cv2.contourArea)
-            area = cv2.contourArea(largest_contour)
-            if area > 500:
-                x, y, w, h = cv2.boundingRect(largest_contour)
-                cx, cy = x + w // 2, y + h // 2
-                distance_cm = (REAL_BALLOON_WIDTH_CM * FOCAL_LENGTH_PX) / w
-                target_info = {
-                    'x': cx,
-                    'y': cy,
-                    'w': w,
-                    'h': h,
-                    'distance_cm': distance_cm,
-                    'area': area,
-                    'yolo_confidence': None,
-                    'color_score': None,
-                    'combined_score': None,
-                    'source': 'color_only',
-                }
-
-        return mask, target_info
-
     def process_frame(self, frame, target_color_name):
-        """
-        Detect balloons with YOLO first, then verify the target color inside
-        the detected region. If no YOLO candidate survives verification, the
-        frame is treated as having no valid balloon target.
-        """
-        # Only accept detections that come from YOLO proposals verified by HSV inside the ROI.
         if self.detector and self.detector.enabled:
             detections = self.detector.detect(frame)
             best_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
@@ -309,10 +248,9 @@ class VisionSystem:
             if best_target is not None:
                 return best_mask, best_target
 
-            # No valid balloon ROI was found, so return a blank mask and no target.
             return np.zeros(frame.shape[:2], dtype=np.uint8), None
 
+        return np.zeros(frame.shape[:2], dtype=np.uint8), None
+
     def cleanup(self):
-        # Release the camera cleanly when the program exits.
-        if self.cap:
-            self.cap.release()
+        self.camera.close()

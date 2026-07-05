@@ -2,6 +2,8 @@
 
 This project is a vision pipeline for an autonomous rover that detects balloons in the sequence BLACK → WHITE → PINK → YELLOW → BLUE, verifies the color with HSV, estimates distance, and emits clean action messages for a separate motion controller.
 
+For the second standalone computer vision task that detects hammer, traffic cone, and tennis ball objects, see [README_OBJECT_DETECTION.md](README_OBJECT_DETECTION.md).
+
 ## What the system does
 
 The current runtime is a two-stage detector:
@@ -13,10 +15,13 @@ That means the system does **not** scan the entire frame with HSV alone during a
 
 ## Repository layout
 
-- `src/main.py`: state machine, frame loop, hold timer, and action output
-- `src/vision.py`: YOLO candidate detection, ROI color verification, and distance estimation
-- `src/config.py`: HSV bounds, camera settings, model path, and thresholds
-- `src/utils/telemetry.py`: per-frame CSV logging for debugging
+- `src/balloon_task/main.py`: balloon state machine, frame loop, hold timer, and action output
+- `src/balloon_task/vision.py`: YOLO candidate detection, ROI color verification, and distance estimation
+- `src/balloon_task/config.py`: balloon HSV bounds, camera settings, model path, and thresholds
+- `src/balloon_task/telemetry.py`: balloon-task CSV logging for debugging
+- `src/object_task/main.py`: standalone object-detection entry point
+- `src/shared/camera.py`: shared webcam helper
+- `src/object_task/telemetry.py`: object-task logging for debugging
 - `tools/calibrate.py`: interactive HSV calibration helper
 - `tools/calibrate_focal.py`: focal length calibration helper
 
@@ -50,13 +55,13 @@ If you want to use a different path, set `YOLO_MODEL_PATH` in the environment be
 ### Development mode with a laptop webcam
 
 ```bash
-CAMERA_INDEX=0 python -m src.main
+CAMERA_INDEX=0 python -m src.balloon_task.main
 ```
 
 ### Deployment mode with the rover USB camera
 
 ```bash
-CAMERA_INDEX=1 python -m src.main
+CAMERA_INDEX=1 python -m src.balloon_task.main
 ```
 
 ### Color calibration
@@ -95,7 +100,7 @@ What happens during calibration:
 2. You adjust the HSV sliders until the target balloon is clearly isolated in the mask.
 3. The goal is to make the balloon appear white in the mask and the background appear black.
 4. When the mask looks correct, press `q` to print the final HSV bounds.
-5. Copy those bounds into `src/config.py` if you need to replace the default values.
+5. Copy those bounds into `src/balloon_task/config.py` if you need to replace the default values.
 
 Why this matters:
 
@@ -118,7 +123,7 @@ What happens during calibration:
 1. Place a balloon at a known distance, usually 100 cm from the camera.
 2. Draw a box around the balloon in the preview window.
 3. The script uses the known real-world balloon width and the measured pixel width to calculate `FOCAL_LENGTH_PX`.
-4. Copy the printed focal length into `src/config.py`.
+4. Copy the printed focal length into `src/balloon_task/config.py`.
 
 Why this matters:
 
@@ -152,7 +157,7 @@ After YOLO finds a candidate balloon region, the code:
 
 1. crops the region of interest
 2. converts that crop from BGR to HSV
-3. applies the target color bounds from `src/config.py`
+3. applies the target color bounds from `src/balloon_task/config.py`
 4. creates a binary mask where matching pixels are white and everything else is black
 5. cleans the mask with erosion and dilation
 6. checks the resulting contour to make sure the object is large and valid enough to be treated as a balloon
@@ -166,13 +171,13 @@ That combination is much more reliable than trying to use color alone.
 
 ## Detection pipeline
 
-The core color logic in `src/vision.py` works like this:
+The core color logic in `src/balloon_task/vision.py` works like this:
 
 1. The camera frame is captured in BGR.
 2. YOLO11 proposes balloon candidate bounding boxes.
 3. The code crops each YOLO box to an ROI.
 4. The ROI is converted to HSV.
-5. The target color bounds from `src/config.py` are applied.
+5. The target color bounds from `src/balloon_task/config.py` are applied.
 6. Morphological operations remove noise.
 7. Contours are used to confirm a strong object region.
 8. The balloon width is used in the pinhole approximation:
@@ -183,7 +188,7 @@ Distance = (Real Balloon Width × Focal Length) / Pixel Width
 
 ## Autonomous behavior
 
-`src/main.py` tracks the target sequence and only advances when:
+`src/balloon_task/main.py` tracks the target sequence and only advances when:
 
 - the correct balloon color is detected
 - the estimated distance is at or below 1.5 m

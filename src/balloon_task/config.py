@@ -16,7 +16,7 @@ HSV_BOUNDS = {
 # Distance = (RealWidth * FocalLength) / PixelWidth
 REAL_BALLOON_WIDTH_CM = 30.0
 # Approximate focal length in pixels (calibrate based on your camera)
-FOCAL_LENGTH_PX = 600.0  
+FOCAL_LENGTH_PX = 600.0
 TARGET_DISTANCE_CM = 150.0 # 1.5 meters
 HOLD_TIME_SEC = 5.0 # Stop for 5 seconds
 

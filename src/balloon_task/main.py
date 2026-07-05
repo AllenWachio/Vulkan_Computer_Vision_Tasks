@@ -2,12 +2,15 @@ import cv2
 import time
 import logging
 import json
-from src.config import TARGET_SEQUENCE, TARGET_DISTANCE_CM, HOLD_TIME_SEC, CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT, CENTER_TOLERANCE_PX
-from src.vision import VisionSystem
-from src.utils.telemetry import TelemetryLogger
+
+from src.balloon_task.config import TARGET_SEQUENCE, TARGET_DISTANCE_CM, HOLD_TIME_SEC, CENTER_TOLERANCE_PX
+from src.balloon_task.telemetry import TelemetryLogger
+from src.balloon_task.vision import VisionSystem
+from src.shared.config_common import CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger("CV_NODE")
+
 
 class StateMachine:
     def __init__(self):
@@ -29,16 +32,14 @@ class StateMachine:
         else:
             logger.info("SEQUENCE_COMPLETE: All targets reached!")
 
+
 def emit_command(action, details=None):
-    """
-    Decoupled output payload. Another team's script can read this standard output 
-    to drive the hardware chassis. Returns the action string for telemetry logging.
-    """
     payload = {"action": action}
     if details:
         payload.update(details)
     logger.info(f"OUTPUT: {json.dumps(payload)}")
     return action
+
 
 def main():
     vision = VisionSystem(camera_index=CAMERA_INDEX, width=CAMERA_WIDTH, height=CAMERA_HEIGHT)
@@ -57,7 +58,7 @@ def main():
             target_color = state.current_target()
             if not target_color:
                 emit_command("STOP", {"reason": "mission_complete"})
-                break 
+                break
 
             ret, frame = vision.read_frame()
             if not ret:
@@ -68,7 +69,6 @@ def main():
             frame_center_x = CAMERA_WIDTH // 2
             mask, target_info = vision.process_frame(frame, target_color)
 
-            # Variables strictly for telemetry recording
             dist_val = None
             err_val = None
             action_taken = "NONE"
@@ -78,7 +78,6 @@ def main():
             color_score = target_info.get('color_score') if target_info else None
             combined_score = target_info.get('combined_score') if target_info else None
 
-            # --- UI Display logic ---
             debug_frame = frame.copy()
             cv2.putText(debug_frame, f"Target: {target_color}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
@@ -86,8 +85,7 @@ def main():
                 dist_val = target_info['distance_cm']
                 cx = target_info['x']
                 err_val = cx - frame_center_x
-                
-                # Draw bounding box
+
                 x, y = cx - target_info['w']//2, target_info['y'] - target_info['h']//2
                 cv2.rectangle(debug_frame, (x, y), (x + target_info['w'], y + target_info['h']), (255, 0, 0), 2)
                 cv2.putText(debug_frame, f"Dist: {int(dist_val)}cm", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
@@ -95,14 +93,13 @@ def main():
                 if state.holding:
                     elapsed = time.time() - state.hold_start_time
                     cv2.putText(debug_frame, f"HOLDING: {elapsed:.1f}s", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                    
+
                     if elapsed >= HOLD_TIME_SEC:
                         state.advance()
                         action_taken = "ADVANCE_SEQUENCE"
                     else:
                         action_taken = emit_command("STOP", {"reason": "holding", "time_left": round(HOLD_TIME_SEC - elapsed, 1)})
                 else:
-                    # Pure Vision Logic / Decision Making
                     if dist_val <= TARGET_DISTANCE_CM:
                         action_taken = emit_command("STOP", {"reason": "target_reached", "distance_cm": round(dist_val, 1)})
                         state.holding = True
@@ -120,7 +117,6 @@ def main():
                     action_taken = emit_command("SEARCH", {"action": "spin_left"})
                     cv2.putText(debug_frame, "SEARCHING...", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 165, 255), 2)
 
-            # Record exactly what happened on this frame to the CSV
             telemetry.log_step(
                 target_color,
                 is_detected,
@@ -148,5 +144,6 @@ def main():
         telemetry.cleanup()
         cv2.destroyAllWindows()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
