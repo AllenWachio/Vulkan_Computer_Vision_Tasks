@@ -1,13 +1,25 @@
+# --- Python & Virtual Environment ---
 venv/
 __pycache__/
 *.pyc
 .env
+
+# --- OS & IDE ---
 .DS_Store
+.vscode/
+.idea/
+
+# --- Logs & Data ---
 logs/
 *.csv
-.vscode
+
+# --- Machine Learning & Weights ---
 *.pt
 *.onnx
 Ballon_Detection_Weights/
 Hammer_Tennisball_Trafficcone_Weights/
 
+# --- ROS 2 Workspace Generated Folders  ---
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
