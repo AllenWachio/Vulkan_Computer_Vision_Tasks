@@ -1,0 +1,39 @@
+balloon_perception_node:
+  ros__parameters:
+    target_sequence: ["BLACK", "WHITE", "PINK", "YELLOW", "BLUE"]
+    target_distance_cm: 150.0
+    hold_time_sec: 5.0
+    center_tolerance_px: 50
+    yolo_model_path: "../../Ballon_Detection_Weights/best.onnx"
+    yolo_conf_threshold: 0.35
+    yolo_iou_threshold: 0.45
+    yolo_input_size: 640
+    real_balloon_width_cm: 30.0
+    focal_length_px: 600.0
+    color_mask_min_ratio: 0.08
+    color_combined_score_threshold: 0.35
+
+    # HSV Bounds for Balloon Color Verification
+    hsv_black_lower: [0, 0, 0]
+    hsv_black_upper: [180, 255, 60]
+
+    hsv_white_lower: [0, 0, 200]
+    hsv_white_upper: [180, 40, 255]
+
+    hsv_pink_lower: [145, 50, 50]
+    hsv_pink_upper: [170, 255, 255]
+
+    hsv_yellow_lower: [20, 100, 100]
+    hsv_yellow_upper: [40, 255, 255]
+
+    hsv_blue_lower: [100, 100, 50]
+    hsv_blue_upper: [130, 255, 255]
+
+object_detection_node:
+  ros__parameters:
+    model_path: "Hammer_Tennisball_Trafficcone_Weights/best.onnx"
+    conf_threshold: 0.35
+    iou_threshold: 0.45
+    input_size: 640
+    object_labels: ["Traffic Cone", "Hammer", "Tennis Ball"]
+    enable_debug_image: true # Publishes a debug image with bounding boxes to /object_detection/debug_image
