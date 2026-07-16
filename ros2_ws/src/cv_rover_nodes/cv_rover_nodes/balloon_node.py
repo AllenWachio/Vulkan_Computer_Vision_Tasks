@@ -14,19 +14,9 @@ from cv_bridge import CvBridge
 from datetime import datetime
 from .telemetry_ros import BalloonTelemetry
 
-# 1. Get the directory where this current node file lives
-current_dir = os.path.dirname(os.path.abspath(__file__))
-
-# 2. Navigate up 4 levels to reach the project root directory
-# Path: cv_rover_nodes (1) -> cv_rover_nodes (2) -> src (3) -> ros2_ws (4) -> PROJECT ROOT
-project_root = os.path.abspath(os.path.join(current_dir, '..', '..', '..', '..'))
-
-# 3. Add the project root to Python's path if it isn't already there
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
 
 # --- NOW YOU CAN IMPORT YOUR EXTERNAL FILES ---
-from src.balloon_task.vision import BalloonDetector
+from .vision.balloon_vision import BalloonDetector
 
 
 class BalloonNode(Node):
