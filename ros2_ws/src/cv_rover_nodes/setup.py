@@ -36,7 +36,7 @@ setup(
             # --- CORRECTED SPELLING ---
             # Change this to 'ballon_node' IF your file is actually named ballon_node.py.
             # (Highly recommended: Rename the file to balloon_node.py with two L's instead)
-            'balloon_node = cv_rover_nodes.ballon_node:main', 
+            'balloon_node = cv_rover_nodes.balloon_node:main', 
             'object_node = cv_rover_nodes.object_node:main',
         ],
     },

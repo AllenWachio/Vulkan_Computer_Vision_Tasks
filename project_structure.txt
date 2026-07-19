@@ -1,0 +1,65 @@
+.
+├── Ballon_Detection_Weights
+│   ├── best.onnx
+│   └── best.pt
+├── Hammer_Tennisball_Trafficcone_Weights
+│   ├── best.onnx
+│   └── best.pt
+├── logs
+│   ├── balloon_session_20260705_201231.csv
+│   ├── balloon_session_20260705_201242.csv
+│   ├── object_session_20260705_143413.csv
+│   ├── object_session_20260705_144431.csv
+│   └── object_session_20260705_200643.csv
+├── project_structure.txt
+├── README.md
+├── requirements.txt
+├── ros2_ws
+│   └── src
+│       └── cv_rover_nodes
+│           ├── cv_rover_nodes
+│           │   ├── ballon_node.py
+│           │   ├── config
+│           │   │   └── params.yaml
+│           │   ├── __init__.py
+│           │   ├── launch
+│           │   │   └── cv_rover.launch.py
+│           │   ├── nodes
+│           │   │   └── csi_camera_node.py
+│           │   ├── object_node.py
+│           │   └── telemetry_ros.py
+│           ├── package.xml
+│           ├── resource
+│           │   └── cv_rover_nodes
+│           ├── setup.cfg
+│           ├── setup.py
+│           └── test
+│               ├── test_copyright.py
+│               ├── test_flake8.py
+│               └── test_pep257.py
+├── Rulebook Cars4Mars ARC 2026 -  [12 April 2026].pdf
+├── src
+│   ├── balloon_task
+│   │   ├── config.py
+│   │   ├── __init__.py
+│   │   ├── main.py
+│   │   ├── telemetry.py
+│   │   └── vision.py
+│   ├── __init__.py
+│   ├── object_task
+│   │   ├── config.py
+│   │   ├── __init__.py
+│   │   ├── main.py
+│   │   ├── telemetry.py
+│   │   └── vision.py
+│   ├── shared
+│   │   ├── camera.py
+│   │   ├── config_common.py
+│   │   └── __init__.py
+│   └── utils
+└── tools
+    ├── calibrate_focal.py
+    ├── calibrate.py
+    └── __init__.py
+
+19 directories, 44 files
